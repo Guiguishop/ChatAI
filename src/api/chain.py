@@ -1,10 +1,11 @@
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.messages import SystemMessage
-from langgraph.graph import MessagesState, HumanMessage, RemoveMessage
+from langchain_core.messages import SystemMessage, HumanMessage, RemoveMessage
+from langgraph.graph import MessagesState, END
 from dotenv import load_dotenv
 from src.api.prompts import PROMPT_SUMMARIZE, SYSTEM_PROMPT
+from typing import Literal
 import os
 
 env_path = os.path.join(
@@ -58,20 +59,45 @@ def call_model(state: State, conversation_summary: str) -> dict:
         messages = [SystemMessage(content=system_message)] + state["messages"]
 
     response = llm.invoke(messages)
-    # We return a list, because thsi will get added to the existing list
+    # We return a list, because this will get added to the existing list
     return {"messages": [response]}
 
 
+# A compléter si on veut rajouter des étapes
+def should_continue(state: State) -> Literal["summarize_history", END]:
+    message = state["messages"]
+    if len(message) > 6:
+        return "summarize_history"
+    return END
+
+
 def summarize_history(state: State) -> dict:
+    # S'il y a un historique conversationnel, cette fonction va le résumer
+
     llm_summarize = ChatOpenAI(
         temperature=os.environ["TEMPERATURE"],
         openai_api_key=os.environ["OPENAI_API_KEY"],
         model=os.environ["OPENAI_MODEL"],
     )
 
+    # Enregistre un historique conversationnel et dans l'historique, on supprime le message qu'il y avait dedans
     history = state.get("history", "")
     if history:
-        history_message = f"Summary of conversation earlier: {history}"
+        history_message = f"Summary of conversation earlier: {history}"
     else:
-        history_message ="No conversaiton history available"
-    message = state["messages"] + 
+        history_message = "No conversation history available"
+
+    message = state["messages"] + [HumanMessage(content=history_message)]
+    response = llm_summarize.invoke(message)
+
+    delete_message = [RemoveMessage(id=m.id) for m in state["messages"][:-2]]
+    return {"history": response.content, "messages": delete_message}
+
+
+def print_update(update: dict) -> None:
+    # Cette fonction permet d'afficher la réponse
+    for k, v in update.items():  # Différentes conversations qu'on a
+        for m in v["messages"]:
+            m.pretty_print()
+        if "history" in v:
+            print(v["history"])
